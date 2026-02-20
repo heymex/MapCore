@@ -82,13 +82,15 @@ describe("StatsBar", () => {
   it("renders count of nodes with location", async () => {
     render(<StatsBar />);
 
+    // Wait for the node count to appear (proves data loaded).
     await vi.waitFor(() => {
-      expect(screen.getByText("With Location")).toBeInTheDocument();
+      expect(screen.getByText("2")).toBeInTheDocument();
     });
 
-    // "With Location" and "Active Signals" both display 1, so use getAllByText.
+    // "With Location" and "Active Signals" both show 1 — verify at least one exists.
     const ones = screen.getAllByText("1");
     expect(ones.length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("With Location")).toBeInTheDocument();
   });
 
   it("renders the latest packet type", async () => {
