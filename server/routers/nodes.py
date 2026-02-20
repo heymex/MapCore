@@ -27,9 +27,7 @@ def get_nodes(
         List of :class:`Node` records.
     """
     return list(
-        session.exec(
-            select(Node).order_by(Node.last_seen.desc()).limit(limit)
-        ).all()
+        session.exec(select(Node).order_by(Node.last_seen.desc()).limit(limit)).all()
     )
 
 
@@ -50,9 +48,7 @@ def get_node(
     Raises:
         HTTPException: 404 if the node is not found.
     """
-    node = session.exec(
-        select(Node).where(Node.node_hash == node_hash)
-    ).first()
+    node = session.exec(select(Node).where(Node.node_hash == node_hash)).first()
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     return node

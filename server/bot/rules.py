@@ -37,7 +37,9 @@ class RuleEngine:
         """
         with get_session() as session:
             rules = list(
-                session.exec(select(BotRule).where(BotRule.enabled == True)).all()  # noqa: E712
+                session.exec(
+                    select(BotRule).where(BotRule.enabled == True)
+                ).all()  # noqa: E712
             )
 
         for rule in rules:

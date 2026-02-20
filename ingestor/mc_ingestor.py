@@ -136,7 +136,9 @@ class MCIngestor:
             headers={"X-API-Key": self.monitor_api_key},
         )
         resp.raise_for_status()
-        logger.info("POST /ingest/%s → %s (%d items)", endpoint, resp.status_code, len(data))
+        logger.info(
+            "POST /ingest/%s → %s (%d items)", endpoint, resp.status_code, len(data)
+        )
 
     # ------------------------------------------------------------------
     # Main event loop

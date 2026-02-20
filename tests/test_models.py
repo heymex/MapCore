@@ -21,9 +21,7 @@ class TestNodeModel:
             session.add(node)
             session.commit()
 
-            result = session.exec(
-                select(Node).where(Node.node_hash == "AB")
-            ).first()
+            result = session.exec(select(Node).where(Node.node_hash == "AB")).first()
             assert result is not None
             assert result.name == "TestNode"
             assert result.is_local is False
