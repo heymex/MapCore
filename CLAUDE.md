@@ -3,21 +3,50 @@
 > **Project:** MeshCore Monitor  
 > **Goal:** A MeshMonitor-equivalent web platform for MeshCore networks, built on the pyMC_Repeater HTTP API.  
 > **Architecture:** Decoupled — Pi runs pyMC_Core + pyMC_Repeater; this stack runs anywhere.  
-> **PoC Targets:** Packet ingestion → SQLite persistence → map view → basic bot/auto-responder framework.
+> **PoC Targets:** Packet ingestion → SQLite persistence → map view → basic bot/auto-responder framework.  
+> **Last Updated:** 2026-02-20
+
+---
+
+## Current Status
+
+> **All application code is scaffolded, tested, and building.** The single remaining blocker before live deployment is mapping the real pyMC_Repeater API responses to the ingestor's normalization layer.
+
+| Milestone | Status | Notes |
+|---|---|---|
+| Phase 1 — Ingestor | ✅ Code complete | Placeholder field names; needs real API mapping |
+| Phase 2 — Backend API | ✅ Code complete | All routers, models, schemas, bot framework |
+| Phase 3 — Frontend | ✅ Code complete | Dashboard, Map, Packets, Nodes, BotRules pages |
+| Phase 4 — Bot Framework | ✅ Code complete | Rule engine, action executor, seed rules |
+| Phase 5 — Integration | 🔶 Partial | Smoke-tested with synthetic data; needs live device |
+| Python tests (pytest) | ✅ 26 passing | Models, ingest API, bot rules |
+| Frontend tests (vitest) | ✅ 34 passing | API client, hooks, components, pages |
+| Black formatting | ✅ Clean | All Python code formatted |
+| TypeScript build | ✅ Clean | `tsc -b && vite build` — no errors |
+| Docker image | ✅ Builds & runs | Multi-stage node:20-alpine → python:3.12-slim |
+| Container smoke test | ✅ Verified | API, WebSocket, ingest, seed data, frontend serving |
+| Build server | ✅ Configured | derek@10.10.199.45 (Ubuntu 24.04) |
+
+### What remains before live deployment
+
+1. **Map the pyMC_Repeater HTTP API** — curl every endpoint, capture real JSON responses, update `ingestor/mc_ingestor.py`'s `normalize_packet()` and `poll_neighbors()` to match actual field names.
+2. **Deploy ingestor to the Pi** — configure `config.yaml` with real addresses, install as systemd service.
+3. **Verify end-to-end** — real packets flowing from radio → Repeater → ingestor → monitor → browser.
 
 ---
 
 ## Table of Contents
 
+0. [Current Status](#current-status)
 1. [Architecture Overview](#1-architecture-overview)
 2. [Repository Structure](#2-repository-structure)
 3. [Technology Stack](#3-technology-stack)
 4. [Data Model](#4-data-model)
-5. [Phase 1 — Ingestor (Pi-side bridge)](#5-phase-1--ingestor-pi-side-bridge)
-6. [Phase 2 — Backend API Server](#6-phase-2--backend-api-server)
-7. [Phase 3 — Frontend Dashboard](#7-phase-3--frontend-dashboard)
-8. [Phase 4 — Bot Framework](#8-phase-4--bot-framework)
-9. [Phase 5 — PoC Integration & Smoke Tests](#9-phase-5--poc-integration--smoke-tests)
+5. [Phase 1 — Ingestor ✅](#5-phase-1--ingestor-pi-side-bridge-)
+6. [Phase 2 — Backend API Server ✅](#6-phase-2--backend-api-server-)
+7. [Phase 3 — Frontend Dashboard ✅](#7-phase-3--frontend-dashboard-)
+8. [Phase 4 — Bot Framework ✅](#8-phase-4--bot-framework-)
+9. [Phase 5 — PoC Integration 🔶](#9-phase-5--poc-integration--smoke-tests-)
 10. [Configuration Reference](#10-configuration-reference)
 11. [Deployment](#11-deployment)
 12. [Known Constraints & MeshCore-Specific Notes](#12-known-constraints--meshcore-specific-notes)
@@ -66,69 +95,99 @@
 ## 2. Repository Structure
 
 ```
-meshcore-monitor/
+MapCore/
 ├── CLAUDE.md                  ← this file
-├── README.md
 ├── .env.example
+├── .gitignore
 ├── docker-compose.yml
 ├── docker-compose.dev.yml
-├── Dockerfile                 ← monitor server + frontend
+├── Dockerfile                 ← multi-stage: node:20-alpine → python:3.12-slim
 │
 ├── ingestor/                  ← Pi-side bridge (deploy separately)
 │   ├── mc_ingestor.py
-│   ├── requirements.txt
+│   ├── requirements.txt       ← httpx, PyYAML
 │   ├── config.yaml.example
 │   └── mc-ingestor.service    ← systemd unit
 │
 ├── server/                    ← FastAPI backend
-│   ├── main.py
+│   ├── __init__.py
+│   ├── main.py                ← lifespan-based startup, static file serving
 │   ├── database.py
-│   ├── models.py              ← SQLModel table definitions
-│   ├── schemas.py             ← Pydantic I/O schemas
+│   ├── models.py              ← SQLModel tables (Node, Packet, Telemetry, Neighbor, BotRule)
+│   ├── schemas.py             ← Pydantic v2 response schemas (ConfigDict)
 │   ├── routers/
-│   │   ├── ingest.py          ← POST endpoints for ingestor
-│   │   ├── nodes.py
-│   │   ├── packets.py
-│   │   ├── telemetry.py
-│   │   └── ws.py              ← WebSocket broadcast
+│   │   ├── __init__.py
+│   │   ├── ingest.py          ← POST /ingest/packets, /ingest/neighbors
+│   │   ├── nodes.py           ← GET /api/nodes, /api/nodes/{hash}
+│   │   ├── packets.py         ← GET /api/packets (with type/source filters)
+│   │   ├── telemetry.py       ← placeholder router
+│   │   ├── bot_rules.py       ← CRUD /api/bot/rules
+│   │   └── ws.py              ← WebSocket /ws broadcast manager
 │   ├── bot/
-│   │   ├── worker.py          ← async bot event loop
-│   │   ├── rules.py           ← rule engine
-│   │   ├── actions.py         ← action executor (calls Repeater API)
+│   │   ├── __init__.py
+│   │   ├── worker.py          ← async bot event loop (asyncio.Queue)
+│   │   ├── rules.py           ← RuleEngine (packet_type, keyword, node_seen)
+│   │   ├── actions.py         ← ActionExecutor (log, send_message, webhook, telemetry)
 │   │   └── built_in_rules/
-│   │       ├── ping_reply.py
-│   │       ├── position_reply.py
-│   │       └── telemetry_request.py
-│   └── requirements.txt
+│   │       ├── __init__.py
+│   │       └── seed.py        ← 3 built-in rules seeded on startup
+│   └── requirements.txt       ← fastapi, uvicorn, sqlmodel, httpx, python-dotenv
 │
-├── frontend/                  ← React + TypeScript SPA
+├── frontend/                  ← React 18 + TypeScript SPA (Vite + Tailwind)
 │   ├── package.json
-│   ├── vite.config.ts
+│   ├── package-lock.json      ← committed for reproducible npm ci
+│   ├── vite.config.ts         ← proxy /api, /ingest, /ws → :8001
+│   ├── vitest.config.ts       ← jsdom environment, setup file
 │   ├── tsconfig.json
+│   ├── tailwind.config.js
+│   ├── postcss.config.js
+│   ├── index.html
 │   └── src/
 │       ├── main.tsx
-│       ├── App.tsx
-│       ├── api/               ← typed API client
-│       ├── components/
-│       │   ├── Map/
-│       │   ├── PacketFeed/
-│       │   ├── NodeList/
-│       │   ├── Topology/
-│       │   └── BotRules/
+│       ├── App.tsx             ← BrowserRouter with route definitions
+│       ├── index.css           ← Tailwind base/components/utilities
+│       ├── __tests__/
+│       │   └── setup.ts        ← jest-dom/vitest matchers
+│       ├── api/
+│       │   ├── types.ts        ← Node, Packet, BotRule, WsEvent interfaces
+│       │   ├── client.ts       ← typed fetch wrappers for all endpoints
+│       │   └── __tests__/
+│       │       └── client.test.ts
 │       ├── hooks/
-│       │   ├── useWebSocket.ts
-│       │   └── useNodes.ts
+│       │   ├── useWebSocket.ts ← auto-reconnecting WS hook
+│       │   ├── useNodes.ts     ← node state + live merge + packet paths
+│       │   └── __tests__/
+│       │       └── useNodes.test.ts
+│       ├── components/
+│       │   ├── StatsBar.tsx    ← node/packet/location summary strip
+│       │   ├── Map/
+│       │   │   └── NodeMap.tsx ← Leaflet map with CircleMarker + Popup
+│       │   ├── PacketFeed/
+│       │   │   └── PacketFeed.tsx ← live WS-driven packet stream
+│       │   ├── NodeList/
+│       │   │   └── NodeList.tsx   ← tabular node listing
+│       │   ├── BotRules/
+│       │   │   └── BotRuleRow.tsx ← toggle/delete row component
+│       │   └── __tests__/
+│       │       ├── StatsBar.test.tsx
+│       │       ├── PacketFeed.test.tsx
+│       │       ├── NodeList.test.tsx
+│       │       └── BotRuleRow.test.tsx
 │       └── pages/
-│           ├── Dashboard.tsx
-│           ├── Packets.tsx
-│           ├── Nodes.tsx
+│           ├── Dashboard.tsx   ← StatsBar + NodeMap + PacketFeed layout
 │           ├── Map.tsx
-│           └── BotRules.tsx
+│           ├── Nodes.tsx
+│           ├── Packets.tsx     ← historical table with type filter
+│           ├── BotRules.tsx    ← CRUD table + inline create form
+│           └── __tests__/
+│               ├── Packets.test.tsx
+│               └── BotRules.test.tsx
 │
-└── tests/
-    ├── test_ingest.py
-    ├── test_models.py
-    └── test_bot_rules.py
+└── tests/                     ← Python backend tests (pytest)
+    ├── conftest.py            ← shared fixtures, in-memory SQLite with StaticPool
+    ├── test_ingest.py         ← 7 tests: ingest, dedup, node upsert, auth
+    ├── test_models.py         ← 7 tests: all model CRUD + defaults
+    └── test_bot_rules.py      ← 12 tests: rule matching, CRUD API, engine
 ```
 
 ---
@@ -164,12 +223,15 @@ meshcore-monitor/
 | Charts | **Recharts** | React-native, lightweight |
 | WebSocket | **native browser WS** via custom hook | No extra lib needed |
 | Styling | **Tailwind CSS** | Utility-first, rapid PoC development |
+| Testing | **Vitest + @testing-library/react** | Fast, Vite-native, jest-compatible API |
 
 ---
 
 ## 4. Data Model
 
 These are the core SQLModel tables. Design them to be additive — add columns as the pyMC_Repeater API reveals more data.
+
+> **Implementation note:** All `datetime` defaults use `datetime.now(timezone.utc)` (not the deprecated `datetime.utcnow()`). Pydantic schemas use `model_config = ConfigDict(from_attributes=True)` (not the deprecated `class Config`). The FastAPI app uses the `lifespan` context manager pattern (not the deprecated `@app.on_event`).
 
 ### `nodes` table
 ```python
@@ -183,8 +245,8 @@ class Node(SQLModel, table=True):
     lon: Optional[float] = None
     last_rssi: Optional[int] = None
     last_snr: Optional[float] = None
-    first_seen: datetime = Field(default_factory=datetime.utcnow)
-    last_seen: datetime = Field(default_factory=datetime.utcnow)
+    first_seen: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_seen: datetime = Field(default_factory=lambda: datetime.now(UTC))
     is_local: bool = False                            # True for the monitored repeater itself
 ```
 
@@ -192,7 +254,7 @@ class Node(SQLModel, table=True):
 ```python
 class Packet(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    received_at: datetime = Field(default_factory=datetime.utcnow)
+    received_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     packet_hash: Optional[str] = Field(default=None, index=True)  # dedup key
     packet_type: str        # ADVERT | TXT_MSG | ACK | RESPONSE | TRACE | CHANNEL_MSG
     route_type: str         # FLOOD | DIRECT
@@ -213,7 +275,7 @@ class Packet(SQLModel, table=True):
 class Telemetry(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     node_hash: str = Field(foreign_key="node.node_hash", index=True)
-    recorded_at: datetime = Field(default_factory=datetime.utcnow)
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     battery_pct: Optional[float] = None
     voltage: Optional[float] = None
     temperature: Optional[float] = None
@@ -229,7 +291,7 @@ class Telemetry(SQLModel, table=True):
 ```python
 class Neighbor(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    observed_at: datetime = Field(default_factory=datetime.utcnow)
+    observed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     node_hash: str          # the node that observed this neighbor
     neighbor_hash: str      # the neighbor observed
     rssi: Optional[int] = None
@@ -254,7 +316,9 @@ class BotRule(SQLModel, table=True):
 
 ---
 
-## 5. Phase 1 — Ingestor (Pi-side bridge)
+## 5. Phase 1 — Ingestor (Pi-side bridge) ✅
+
+**Status:** Code complete. Needs real pyMC_Repeater API field mapping before live deployment.
 
 **Goal:** A single Python script running on the Pi that polls pyMC_Repeater's HTTP API and POSTs normalized data to the monitor server. This is the entire Pi-side deliverable for PoC.
 
@@ -419,7 +483,9 @@ WantedBy=multi-user.target
 
 ---
 
-## 6. Phase 2 — Backend API Server
+## 6. Phase 2 — Backend API Server ✅
+
+**Status:** Code complete and tested (26 pytest tests). Includes bot rules CRUD router not in original spec.
 
 **Goal:** FastAPI server that accepts ingested data, persists it to SQLite, serves it via REST, and streams live updates via WebSocket.
 
@@ -557,7 +623,7 @@ def upsert_node(session: Session, node_hash: str, data: dict):
     node = session.exec(select(Node).where(Node.node_hash == node_hash)).first()
     if not node:
         node = Node(node_hash=node_hash)
-    node.last_seen = datetime.utcnow()
+    node.last_seen = datetime.now(timezone.utc)
     node.last_rssi = data.get("rssi", node.last_rssi)
     node.last_snr = data.get("snr", node.last_snr)
     if data.get("name"):
@@ -603,17 +669,29 @@ def get_packets(
 
 ### 6.5 Main app entrypoint
 
+> **Implementation note:** Uses the `lifespan` context manager pattern instead of the deprecated `@app.on_event("startup")`.
+
 ```python
 # server/main.py
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from .database import create_db
-from .routers import ingest, nodes, packets, telemetry, ws
+from .routers import ingest, nodes, packets, telemetry, bot_rules, ws
 from .bot.worker import start_bot_worker
-import asyncio
+from .bot.built_in_rules.seed import seed_builtin_rules
+import asyncio, os
 
-app = FastAPI(title="MeshCore Monitor", version="0.1.0")
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    create_db()
+    seed_builtin_rules()
+    if os.getenv("BOT_ENABLED", "true").lower() == "true":
+        asyncio.create_task(start_bot_worker())
+    yield
+
+app = FastAPI(title="MeshCore Monitor", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -621,20 +699,18 @@ app.include_router(ingest.router)
 app.include_router(nodes.router, prefix="/api")
 app.include_router(packets.router, prefix="/api")
 app.include_router(telemetry.router, prefix="/api")
+app.include_router(bot_rules.router, prefix="/api")
 app.include_router(ws.router)
 
-@app.on_event("startup")
-async def startup():
-    create_db()
-    asyncio.create_task(start_bot_worker())
-
-# Serve built frontend
+# Serve built frontend (production — Vite builds to frontend/dist)
 app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")
 ```
 
 ---
 
-## 7. Phase 3 — Frontend Dashboard
+## 7. Phase 3 — Frontend Dashboard ✅
+
+**Status:** Code complete and tested (34 vitest tests). Five pages implemented: Dashboard, Map, Nodes, Packets, BotRules. Topology graph view deferred to post-PoC.
 
 **Goal:** React SPA with four primary views: Dashboard, Node Map, Packet Feed, and Bot Rules. Connects to the FastAPI backend via REST and WebSocket.
 
@@ -826,7 +902,9 @@ export function Dashboard() {
 
 ---
 
-## 8. Phase 4 — Bot Framework
+## 8. Phase 4 — Bot Framework ✅
+
+**Status:** Code complete and tested. Rule engine supports packet_type, keyword, and node_seen triggers. Actions support log, send_message, webhook, and telemetry_request. Three built-in rules seeded on startup. Bot rules CRUD API and frontend UI implemented.
 
 **Goal:** An async rule engine that monitors the event stream and can dispatch responses back through pyMC_Repeater. For PoC, implement ping reply and node-seen notification.
 
@@ -889,7 +967,7 @@ class RuleEngine:
                 # Update trigger stats
                 with get_session() as session:
                     r = session.get(BotRule, rule.id)
-                    r.last_triggered = datetime.utcnow()
+                    r.last_triggered = datetime.now(timezone.utc)
                     r.trigger_count += 1
                     session.add(r)
                     session.commit()
@@ -1057,18 +1135,18 @@ export function BotRules() {
 
 ---
 
-## 9. Phase 5 — PoC Integration & Smoke Tests
+## 9. Phase 5 — PoC Integration & Smoke Tests 🔶
 
 ### 9.1 PoC success criteria
 
 The PoC is considered complete when all of the following are true:
 
-- [ ] Ingestor runs on Pi, successfully polls pyMC_Repeater, and POSTs data to monitor server
-- [ ] Monitor server persists packets, nodes, and neighbors to SQLite without errors
-- [ ] At least one real node with location data appears on the map
-- [ ] Live packet feed updates in browser without page refresh
-- [ ] At least one bot rule (ping reply or log) fires correctly on a matching event
-- [ ] Bot send-message action either sends through Repeater API or logs clearly that the endpoint needs mapping
+- [ ] Ingestor runs on Pi, successfully polls pyMC_Repeater, and POSTs data to monitor server *(blocked on API mapping)*
+- [x] Monitor server persists packets, nodes, and neighbors to SQLite without errors *(verified via smoke test 2026-02-20)*
+- [ ] At least one real node with location data appears on the map *(needs live device)*
+- [x] Live packet feed updates in browser without page refresh *(WebSocket broadcast verified)*
+- [x] At least one bot rule (ping reply or log) fires correctly on a matching event *(tested in test_bot_rules.py)*
+- [x] Bot send-message action either sends through Repeater API or logs clearly that the endpoint needs mapping *(logs intent — see actions.py)*
 
 ### 9.2 Manual integration checklist
 
@@ -1077,88 +1155,77 @@ The PoC is considered complete when all of the following are true:
 □ All Repeater API endpoints documented (run: curl http://<pi>:8000/api/*)
 □ Ingestor config.yaml updated with Pi address and monitor server URL
 □ Monitor server .env configured with INGEST_API_KEY and REPEATER_URL
-□ docker compose up (or uvicorn server.main:app) starts without errors
-□ curl -H "X-API-Key: ..." http://monitor:8001/ingest/packets -d '[{...}]' returns {"saved": 1}
-□ Browser opens http://monitor:8001, Dashboard loads
-□ Map renders (even if no nodes with location yet — check that map tiles load)
-□ WebSocket connection shown as open in browser DevTools
-□ Ingestor logs show successful POSTs: "saved N packets"
-□ /api/nodes returns at least one node after ingestor runs
-□ /api/packets returns packets
-□ Enable "Log all ADVERT packets" bot rule, verify log output on next ADVERT
-□ Verify /api/bot/rules CRUD works from frontend
+■ docker compose up (or uvicorn server.main:app) starts without errors    [verified 2026-02-20]
+■ curl -H "X-API-Key: ..." POST /ingest/packets returns {"saved": 1}     [verified 2026-02-20]
+■ Browser opens http://monitor:8001, Dashboard loads                      [verified 2026-02-20]
+■ Map renders (tiles load even without node locations)                     [verified 2026-02-20]
+■ WebSocket /ws endpoint accepts connections                              [verified 2026-02-20]
+□ Ingestor logs show successful POSTs: "saved N packets"                  [needs live device]
+■ /api/nodes returns nodes after ingest                                   [verified 2026-02-20]
+■ /api/packets returns packets                                            [verified 2026-02-20]
+■ /api/bot/rules returns 3 seeded rules on startup                        [verified 2026-02-20]
+□ Enable "Log all ADVERT packets" bot rule, verify log on next ADVERT     [needs live device]
+■ /api/bot/rules CRUD works (create, update, delete tested)               [verified 2026-02-20]
+■ /docs Swagger UI renders all endpoints                                  [verified 2026-02-20]
 ```
 
-### 9.3 Key unknowns to resolve before/during coding
+### 9.3 Key unknowns to resolve before live deployment
+
+> **These are the only remaining blockers.** All application code is built and tested against placeholder field names. Resolving these unknowns is a field-mapping exercise, not a coding exercise.
 
 These require hands-on inspection of pyMC_Repeater:
 
-1. **Exact API endpoint paths and response schemas** — The most important unknown. Map every route the CherryPy server exposes before writing the ingestor's `normalize_*` methods.
+1. **Exact API endpoint paths and response schemas** — The most important unknown. Curl every route the CherryPy server exposes and capture the raw JSON. Then update `ingestor/mc_ingestor.py` → `normalize_packet()` to map actual field names to our schema. **This is the single critical-path item.**
 
-2. **Does the Repeater expose a "send message" endpoint?** — Critical for bot action execution. Check the CherryPy routes in `repeater/` source code for any POST endpoints that trigger transmission.
+2. **Does the Repeater expose a "send message" endpoint?** — Critical for bot action execution. Check the CherryPy routes in `repeater/` source code for any POST endpoints that trigger transmission. If none exists, the bot logs intent (already implemented).
 
-3. **Packet dedup field** — Does the Repeater include a stable unique ID or hash per packet in its API responses? If not, implement timestamp + source_hash + type composite dedup.
+3. **Packet dedup field** — Does the Repeater include a stable unique ID or hash per packet in its API responses? If not, implement timestamp + source_hash + type composite dedup (the server already supports hash-based dedup).
 
-4. **How locations appear in API responses** — Tracked adverts carry lat/lon in pyMC_Core, but does pyMC_Repeater surface this in its HTTP API, or only in the HTML dashboard?
+4. **How locations appear in API responses** — Tracked adverts carry lat/lon in pyMC_Core, but does pyMC_Repeater surface this in its HTTP API, or only in the HTML dashboard? This determines whether the map will auto-populate.
 
-5. **Neighbor table schema** — What fields does `/api/neighbors` (or equivalent) return?
+5. **Neighbor table schema** — What fields does `/api/neighbors` (or equivalent) return? The ingestor passes these through mostly raw; field name mapping may be needed.
 
-To answer these: clone pyMC_Repeater, run it against a live radio or mock, inspect the CherryPy route handlers in `repeater/` source, and capture actual HTTP responses.
-
-### 9.4 Basic tests
-
-```python
-# tests/test_ingest.py
-from fastapi.testclient import TestClient
-from server.main import app
-import os
-
-os.environ["INGEST_API_KEY"] = "testkey"
-client = TestClient(app)
-
-def test_ingest_packet():
-    resp = client.post(
-        "/ingest/packets",
-        json=[{
-            "packet_hash": "abc123",
-            "packet_type": "ADVERT",
-            "route_type": "FLOOD",
-            "path": '["FA","79"]',
-            "hop_count": 2,
-            "rssi": -85,
-            "snr": 7.5,
-            "source_hash": "FA",
-        }],
-        headers={"X-API-Key": "testkey"},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["saved"] == 1
-
-def test_dedup_packet():
-    # Second insert of same hash should not create duplicate
-    for _ in range(2):
-        client.post("/ingest/packets", json=[{"packet_hash": "dup999", ...}],
-                    headers={"X-API-Key": "testkey"})
-    resp = client.get("/api/packets")
-    hashes = [p["packet_hash"] for p in resp.json()]
-    assert hashes.count("dup999") == 1
-
-def test_node_created_from_packet():
-    client.post("/ingest/packets",
-                json=[{"packet_hash": "n001", "source_hash": "AA", "packet_type": "ADVERT"}],
-                headers={"X-API-Key": "testkey"})
-    resp = client.get("/api/nodes/AA")
-    assert resp.status_code == 200
-
-# tests/test_bot_rules.py
-def test_packet_type_trigger_matches():
-    from server.bot.rules import RuleEngine
-    from server.models import BotRule
-    engine = RuleEngine()
-    rule = BotRule(trigger_type="packet_type", trigger_value="ADVERT", ...)
-    event = {"data": {"packet_type": "ADVERT"}}
-    assert asyncio.run(engine._matches(rule, event)) is True
+**To resolve:** Run pyMC_Repeater against a live radio, then:
+```bash
+curl http://<pi>:8000/api/stats      | python -m json.tool > api_stats.json
+curl http://<pi>:8000/api/packets    | python -m json.tool > api_packets.json
+curl http://<pi>:8000/api/neighbors  | python -m json.tool > api_neighbors.json
+# Inspect CherryPy source for any additional routes
 ```
+Share those JSON files and the ingestor's `normalize_packet()` will be updated accordingly.
+
+### 9.4 Test suites
+
+> **60 tests total** across Python (26) and frontend (34). All passing as of 2026-02-20.
+
+#### Python tests — `pytest`
+
+Run: `cd MapCore && source .venv/bin/activate && python -m pytest tests/ -v`
+
+| File | Tests | Coverage |
+|---|---|---|
+| `tests/test_models.py` | 7 | All SQLModel tables: create, defaults, relationships |
+| `tests/test_ingest.py` | 7 | Packet ingest, dedup, node upsert, neighbor ingest, API key auth |
+| `tests/test_bot_rules.py` | 12 | Rule matching (packet_type, keyword, node_seen), CRUD API, engine evaluate |
+
+Test infrastructure: `tests/conftest.py` uses an in-memory SQLite database with `StaticPool` to ensure all test connections share the same database instance.
+
+#### Frontend tests — `vitest`
+
+Run: `cd MapCore/frontend && npm test`
+
+| File | Tests | Coverage |
+|---|---|---|
+| `client.test.ts` | 9 | All API client functions (fetch, create, update, delete) |
+| `useNodes.test.ts` | 4 | Load from API, merge updates, insert new, path cap |
+| `StatsBar.test.tsx` | 3 | Node count, location count, latest packet type |
+| `PacketFeed.test.tsx` | 1 | Empty state rendering |
+| `NodeList.test.tsx` | 3 | Table headers, data rendering, empty state |
+| `BotRuleRow.test.tsx` | 5 | Display, ON/OFF toggle, delete action |
+| `Packets.test.tsx` | 4 | Page title, data rendering, empty state, filter re-fetch |
+| `BotRules.test.tsx` | 5 | Page title, rules list, empty state, form toggle, create |
+
+Test infrastructure: `vitest.config.ts` with jsdom environment; `@testing-library/react` + `@testing-library/jest-dom` for component testing.
 
 ---
 
@@ -1204,25 +1271,54 @@ services:
 
 ## 11. Deployment
 
+### Build server
+
+The project uses a dedicated build server for CI/test/Docker tasks:
+
+- **Host:** `derek@10.10.199.45` (Ubuntu 24.04, hostname `derek-build3`)
+- **Toolchain:** Node 20, npm 10, Python 3.12, Docker 28
+- **Repo:** `~/MapCore` (cloned from GitHub)
+- **Python venv:** `~/MapCore/.venv` (pre-installed with server + ingestor deps)
+- **npm deps:** `~/MapCore/frontend/node_modules` (installed via `npm ci`)
+
 ### Development (no Docker)
 
 ```bash
-# Backend
-cd server
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8001
+# Backend (terminal 1)
+cd ~/MapCore
+source .venv/bin/activate
+INGEST_API_KEY=changeme BOT_ENABLED=true \
+  uvicorn server.main:app --reload --host 0.0.0.0 --port 8001
 
-# Frontend (separate terminal)
-cd frontend
-npm install
-npm run dev   # Vite dev server on :5173, proxies /api and /ws to :8001
+# Frontend (terminal 2)
+cd ~/MapCore/frontend
+npm run dev -- --host 0.0.0.0
+# → Vite dev server on :5173, proxies /api, /ingest, /ws → :8001
 
 # Ingestor (on Pi, or locally pointing at Pi)
-cd ingestor
+cd ~/MapCore/ingestor
 pip install -r requirements.txt
 cp config.yaml.example config.yaml  # edit with Pi address
 python mc_ingestor.py
+```
+
+### Docker (verified 2026-02-20)
+
+```bash
+# Build the multi-stage image (node:20-alpine + python:3.12-slim)
+docker build -t meshcore-monitor:dev .
+
+# Run the container
+docker run -d --name mc-monitor \
+  -p 8001:8001 \
+  -e INGEST_API_KEY=changeme \
+  -e BOT_ENABLED=true \
+  -e REPEATER_URL=http://<pi-ip>:8000 \
+  meshcore-monitor:dev
+
+# Verify
+curl http://localhost:8001/docs          # Swagger UI
+curl http://localhost:8001/api/bot/rules  # 3 seeded rules
 ```
 
 ### Production
@@ -1233,6 +1329,25 @@ docker compose up -d
 # On Pi: install ingestor as systemd service
 sudo cp ingestor/mc-ingestor.service /etc/systemd/system/
 sudo systemctl enable --now mc-ingestor
+```
+
+### Running tests
+
+```bash
+# Python backend tests
+cd ~/MapCore && source .venv/bin/activate
+python -m pytest tests/ -v           # 26 tests
+
+# Frontend tests
+cd ~/MapCore/frontend
+npm test                             # 34 tests (vitest)
+
+# Formatting
+cd ~/MapCore
+black --check server/ ingestor/ tests/
+
+# Full build
+cd ~/MapCore/frontend && npm run build   # tsc -b && vite build
 ```
 
 ### Vite proxy config (dev)
