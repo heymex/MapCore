@@ -1,0 +1,18 @@
+# Copyright © 2025-26 l5yth & contributors
+# Licensed under BSD 3-Clause License
+
+[Unit]
+Description=MeshCore Monitor Ingestor
+After=network.target pymc-repeater.service
+Requires=pymc-repeater.service
+
+[Service]
+Type=simple
+User=repeater
+WorkingDirectory=/opt/mc-ingestor
+ExecStart=/opt/mc-ingestor/venv/bin/python mc_ingestor.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

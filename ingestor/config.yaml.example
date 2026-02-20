@@ -1,0 +1,15 @@
+# MeshCore Monitor Ingestor — Configuration
+# Copy to config.yaml and update values before running.
+
+repeater:
+  url: http://localhost:8000    # pyMC_Repeater address (local on Pi)
+  api_key: null                 # if Repeater adds auth later
+
+monitor:
+  url: https://your-monitor-server.example.com
+  api_key: your-secret-key-here
+
+poll_interval_seconds: 5
+
+logging:
+  level: INFO

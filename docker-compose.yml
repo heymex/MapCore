@@ -1,0 +1,16 @@
+# Copyright © 2025-26 l5yth & contributors
+# Licensed under BSD 3-Clause License
+
+services:
+  monitor:
+    build: .
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./data:/data
+    environment:
+      - DATABASE_URL=sqlite:////data/meshcore_monitor.db
+      - INGEST_API_KEY=${INGEST_API_KEY}
+      - REPEATER_URL=${REPEATER_URL}
+      - BOT_ENABLED=${BOT_ENABLED:-true}
+    restart: unless-stopped
