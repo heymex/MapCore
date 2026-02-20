@@ -63,3 +63,5 @@ ingestor/config.yaml
 
 # Data volumes
 data/
+
+CLAUDE.md
