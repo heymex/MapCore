@@ -49,11 +49,16 @@ describe("Packets", () => {
   it("renders packet data from the API", async () => {
     render(<Packets />);
 
+    // Wait for actual row data — "FA → BB" only appears in the packet table,
+    // not in the dropdown options.
     await vi.waitFor(() => {
-      expect(screen.getByText("ADVERT")).toBeInTheDocument();
+      expect(screen.getByText("FA → BB")).toBeInTheDocument();
     });
-    expect(screen.getByText("FA")).toBeInTheDocument();
-    expect(screen.getByText("FA → BB")).toBeInTheDocument();
+
+    // The packet type badge should also be rendered in a <span>, distinct
+    // from the dropdown <option> values.
+    expect(screen.getAllByText("ADVERT").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("FLOOD")).toBeInTheDocument();
   });
 
   it("shows empty state with no packets", async () => {
